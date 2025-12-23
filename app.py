@@ -29,27 +29,44 @@ def check_pinterest_status(url):
 
 def check_trenbe_status(url, driver):
     try:
+        # 1. URL에서 정확한 숫자 ID 추출
         match = re.search(r'\d+', str(url))
         if not match: return "Invalid URL"
         p_id = match.group()
+        
+        # 2. 검색 페이지 접속
         driver.get(f"https://www.trenbe.com/search?keyword={p_id}")
         
+        # 3. 로딩 대기 및 결과 분석
         try:
-            # 검색 결과 혹은 '결과 없음' 박스 대기
-            WebDriverWait(driver, 6).until(
+            WebDriverWait(driver, 7).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/product/'], .no-result-box, .search_no_result"))
             )
         except: pass
         
         page_source = driver.page_source
-        if any(kw in page_source for kw in ["검색 결과가 없습니다", "결과가 없습니다"]):
+        
+        # [수정된 로직 A] 명시적인 '결과 없음' 문구 확인
+        no_result_keywords = ["검색 결과가 없습니다", "결과가 없습니다", "검색 결과 0"]
+        if any(kw in page_source for kw in no_result_keywords):
             return "Expired"
             
-        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        if any(p_id in (item.get_attribute('href') or "") for item in items):
-            return "Active"
-        return "Expired"
-    except: return "Error"
+        # [수정된 로직 B] 검색 결과 리스트 내에 '정확한 상품 ID'를 가진 링크가 있는지 확인
+        # 추천 상품 섹션(예: .recommend-list)을 제외하고 메인 결과 영역만 타겟팅해야 함
+        search_results = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
+        
+        found = False
+        for item in search_results:
+            href = item.get_attribute('href') or ""
+            # 단순히 포함 여부가 아니라 해당 p_id가 경로의 끝에 정확히 일치하는지 확인
+            if href.strip('/').split('/')[-1] == p_id:
+                found = True
+                break
+        
+        return "Active" if found else "Expired"
+        
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 def check_11st_status(url, driver):
     try:
