@@ -1,19 +1,12 @@
 import streamlit as st
-import pd as pd
-import pandas as pd
+import pandas as pd  # import pd as pd 대신 이렇게 수정해야 합니다.
 import time
 import re
 import io
 import urllib.parse
 import requests
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
+# ... 나머지 import 문 동일
 # --- [1. 플랫폼별 정밀 로직 함수] ---
 
 def check_pinterest_status(url):
