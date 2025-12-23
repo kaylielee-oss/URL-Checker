@@ -68,13 +68,24 @@ def check_mustit_status(url, driver):
 # --- [드라이버 설정] ---
 def get_driver():
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless")  # 서버에선 창이 뜨지 않아야 함
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("window-size=1920x1080")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=options)
+    
+    # Streamlit Cloud 환경에서 크롬 실행 파일 경로 지정
+    options.binary_location = "/usr/bin/chromium"
+    
+    try:
+        # 1. 시스템 설치된 드라이버 우선 시도 (Streamlit Cloud용)
+        service = Service("/usr/bin/chromedriver")
+        return webdriver.Chrome(service=service, options=options)
+    except:
+        # 2. 로컬 테스트용 (내 컴퓨터 실행 시)
+        service = Service(ChromeDriverManager().install())
+        return webdriver.Chrome(service=service, options=options)
 
 # --- [UI 구성] ---
 st.set_page_config(page_title="URL Multi-Checker Pro", layout="wide")
