@@ -11,12 +11,11 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 
-# --- [로직 1: 핀터레스트 전용 (No Browser)] ---
+# --- [로직 1: pinterest.com 전용 (No Browser)] ---
 def check_pinterest_status(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        # 응답 코드와 메타 태그로 활성 여부 판단
         if response.status_code == 200 and ('pinterestapp:pin' in response.text or 'og:title' in response.text):
             return "Active"
         return "Dead"
@@ -24,14 +23,15 @@ def check_pinterest_status(url):
         return "Error"
 
 # --- [드라이버 설정] ---
-def get_driver(is_trenbe=False):
+def get_driver(platform_mode):
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
-    if is_trenbe:
+    # trenbe.com은 보안이 까다로워 설정을 강화
+    if platform_mode == "trenbe.com":
         options.add_argument("window-size=1920x1080")
         options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     else:
@@ -45,11 +45,16 @@ def get_driver(is_trenbe=False):
         return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
 
 # --- [UI 구성] ---
-st.set_page_config(page_title="통합 URL Checker Pro", layout="wide")
-st.title("🔍 통합 상품 상태 확인 도구 (Pro)")
+st.set_page_config(page_title="URL Checker Pro", layout="wide")
+st.title("🔍 통합 상품 상태 확인 도구")
 
-# 사이드바 메뉴
-mode = st.sidebar.radio("1. 검사 대상 플랫폼 선택", ["핀터레스트 (고속)", "트렌비 (정밀 검사)", "머스트잇 & 11번가"])
+# 사이드바 메뉴 (요청하신 대로 도메인 형태로 분리)
+mode = st.sidebar.radio("1. 대상 플랫폼 선택", [
+    "pinterest.com", 
+    "trenbe.com", 
+    "mustit.co.kr", 
+    "11st.co.kr"
+])
 input_method = st.sidebar.radio("2. 입력 방식 선택", ["CSV 업로드", "구글 시트 URL"])
 
 df = None
@@ -66,32 +71,32 @@ else:
         try:
             sid = url.split("/d/")[1].split("/")[0]
             df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
-        except: st.error("시트를 불러올 수 없습니다. 공유 설정을 확인하세요.")
+        except: st.error("시트를 불러올 수 없습니다.")
 
 # 분석 시작
 if df is not None:
-    st.write(f"📊 로드된 데이터: {len(df)}행 (선택 모드: {mode})")
+    st.write(f"📊 로드된 데이터: {len(df)}행 (선택 모드: **{mode}**)")
     if st.button("🚀 분석 시작"):
         progress = st.progress(0)
-        status = st.empty()
+        status_label = st.empty()
         
-        # 핀터레스트는 브라우저 없이 처리, 나머지는 셀레늄 사용
         driver = None
-        if mode != "핀터레스트 (고속)":
-            driver = get_driver(is_trenbe=(mode == "트렌비 (정밀 검사)"))
+        if mode != "pinterest.com":
+            driver = get_driver(mode)
         
-        for idx in range(len(df)):
+        total_rows = len(df)
+        for idx in range(total_rows):
             target_url = str(df.iloc[idx, 2])  # C열
-            platform = str(df.iloc[idx, 13]).lower()  # N열
+            data_platform = str(df.iloc[idx, 13]).lower()  # N열
             result = "Skipped"
 
             try:
-                # 1. 핀터레스트 모드
-                if mode == "핀터레스트 (고속)" and 'pinterest' in platform:
+                # 1. pinterest.com (C열 URL 바로 체크)
+                if mode == "pinterest.com" and 'pinterest' in data_platform:
                     result = check_pinterest_status(target_url)
                 
-                # 2. 트렌비 모드
-                elif mode == "트렌비 (정밀 검사)" and 'trenbe' in platform:
+                # 2. trenbe.com (검색창 로직)
+                elif mode == "trenbe.com" and 'trenbe' in data_platform:
                     match = re.search(r'\d+', target_url)
                     if match:
                         p_id = match.group()
@@ -101,39 +106,39 @@ if df is not None:
                             result = "Expired"
                         else: result = "Active"
                 
-                # 3. 머스트잇 & 11번가 모드
-                elif mode == "머스트잇 & 11번가":
-                    if 'mustit' in platform:
-                        driver.get(target_url)
-                        time.sleep(3)
-                        curr = driver.current_url
-                        if "redirector" in curr or "판매종료" in urllib.parse.unquote(curr):
-                            result = "Expired"
-                        elif "판매종료된 상품" in driver.page_source:
+                # 3. mustit.co.kr (리다이렉션 체크)
+                elif mode == "mustit.co.kr" and 'mustit' in data_platform:
+                    driver.get(target_url)
+                    time.sleep(3.5)
+                    curr = driver.current_url
+                    if "redirector" in curr or "판매종료" in urllib.parse.unquote(curr):
+                        result = "Expired"
+                    elif "판매종료된 상품" in driver.page_source:
+                        result = "Expired"
+                    else: result = "Active"
+                
+                # 4. 11st.co.kr (검색창 로직)
+                elif mode == "11st.co.kr" and ('11st' in data_platform or '11번가' in data_platform):
+                    match = re.search(r'\d+', target_url)
+                    if match:
+                        p_id = match.group()
+                        driver.get(f"https://search.11st.co.kr/Search.tmall?kwd={p_id}")
+                        time.sleep(3.5)
+                        if "검색 결과가 없습니다" in driver.page_source:
                             result = "Expired"
                         else: result = "Active"
-                    
-                    elif '11st' in platform or '11번가' in platform:
-                        match = re.search(r'\d+', target_url)
-                        if match:
-                            p_id = match.group()
-                            driver.get(f"https://search.11st.co.kr/Search.tmall?kwd={p_id}")
-                            time.sleep(3)
-                            if "검색 결과가 없습니다" in driver.page_source:
-                                result = "Expired"
-                            else: result = "Active"
                 
                 else:
                     result = "Skipped (Mode mismatch)"
 
             except: result = "Error"
 
-            df.iloc[idx, 3] = result # D열 저장
-            progress.progress((idx + 1) / len(df))
-            status.text(f"[{idx+1}/{len(df)}] {platform} 확인 중... 결과: {result}")
+            df.iloc[idx, 3] = result # D열 결과 저장
+            progress.progress((idx + 1) / total_rows)
+            status_label.text(f"[{idx+1}/{total_rows}] {mode} 확인 중... 결과: {result}")
 
         if driver: driver.quit()
-        st.success("🎉 분석 완료!")
+        st.success("🎉 모든 분석이 완료되었습니다!")
         st.dataframe(df)
 
         # 결과 다운로드 섹션
@@ -141,9 +146,9 @@ if df is not None:
         col1, col2 = st.columns(2)
         with col1:
             csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 결과 CSV 다운로드", csv, "check_result.csv", "text/csv", use_container_width=True)
+            st.download_button("📥 CSV 다운로드", csv, "check_result.csv", "text/csv", use_container_width=True)
         with col2:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
-            st.download_button("📥 결과 엑셀(.xlsx) 다운로드", output.getvalue(), "check_result.xlsx", use_container_width=True)
+            st.download_button("📥 엑셀(.xlsx) 다운로드", output.getvalue(), "check_result.xlsx", use_container_width=True)
