@@ -26,95 +26,87 @@ def check_pinterest_status(url):
 
 def check_trenbe_status(url, driver):
     try:
-        # 1. URL에서 상품 ID 추출
-        match = re.search(r'\d+', str(url))
-        if not match: return "Invalid URL"
-        product_id = match.group()
+        # 1. 상세 페이지 직접 접속 (검색 과정을 거치지 않고 바로 진입)
+        driver.get(url)
+        time.sleep(5)  # 트렌비는 보안 및 동적 로딩이 강하므로 충분히 대기
         
-        # 2. 검색 페이지 접속
-        search_url = f"https://www.trenbe.com/search?keyword={product_id}"
-        driver.get(search_url)
-        time.sleep(4.5) 
+        current_url = driver.current_url
+        page_source = driver.page_source
 
-        # 3. 검색 결과 내에서 실제 상품 링크 찾기
-        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        target_link = None
-        for item in items:
-            href = item.get_attribute('href') or ""
-            # 정확히 해당 product_id를 포함하는 첫 번째 상품 링크를 확보
-            if product_id in href:
-                target_link = href
-                break
+        # [검증 A] 에러 페이지로 리다이렉트 되었는지 확인
+        if "error" in current_url.lower() or "404" in page_source:
+            return "Expired"
 
-        if not target_link:
-            return "Expired" # 검색 결과에 아예 없음
-
-        # 4. [핵심 추가] 상세 페이지로 직접 들어가서 최종 확인
-        driver.get(target_link)
-        time.sleep(3.5)
-        
-        final_page_source = driver.page_source
-        
-        # 판매 종료를 알리는 핵심 키워드들 (트렌비 상세페이지 기준)
-        sold_out_keywords = [
+        # [검증 B] 판매 종료를 알리는 결정적 문구들
+        # 이 문구들이 '없어야' Active입니다.
+        sold_out_indicators = [
             "판매가 종료되었습니다",
             "판매 종료",
-            "품절된 상품입니다",
             "존재하지 않는 상품",
-            "Sold Out"
+            "품절된 상품입니다",
+            "해당 상품은 판매가 종료"
         ]
         
-        # 상세 페이지 주소 확인 (리다이렉트 여부)
-        if "error" in driver.current_url.lower():
+        # 페이지 소스 내에 위 종료 문구가 하나라도 포함되어 있는지 확인
+        if any(kw in page_source for kw in sold_out_indicators):
             return "Expired"
 
-        # 문구 체크 및 구매 버튼 존재 여부 확인
-        if any(kw in final_page_source for kw in sold_out_keywords):
-            return "Expired"
-        
-        # 트렌비는 품절 시 보통 '구매하기' 버튼이 비활성화되거나 사라짐
-        # (사이트 구조에 따라 추가 검증 가능)
-        
+        # [검증 C] 구매 버튼 존재 여부 확인 (최종 확인)
+        # 트렌비 상세페이지의 구매하기 버튼이나 장바구니 버튼의 텍스트/클래스를 확인합니다.
+        try:
+            # 트렌비 구매 버튼 영역 (클래스명은 사이트 업데이트에 따라 변할 수 있음)
+            # 버튼 영역이 존재하고 그 안에 '판매 종료'라는 글자가 없다면 살아있는 것으로 간주
+            buy_btn = driver.find_element(By.CSS_SELECTOR, "body").text
+            if "구매하기" in buy_btn or "장바구니" in buy_btn:
+                return "Active"
+        except:
+            pass
+
+        # 위 문구들이 없고 페이지가 정상적이라면 Active로 판정
         return "Active"
-
+        
     except Exception as e:
         return "Error"
 
-def check_11st_status(url, driver):
+
+        def check_11st_status(url, driver):
     try:
-        # 1. 상세 페이지 직접 접속
+        # 1. 상세 페이지 접속
         driver.get(url)
-        time.sleep(4) # 팝업 및 안내 문구 로딩 대기
+        time.sleep(5)  # 팝업이 뜨는 시간을 충분히 기다림
         
-        # 2. 페이지 소스 획득
+        # 2. 강제 팝업 확인 (가장 확실한 방법)
+        # 11번가 판매종료 안내창은 보통 특정 클래스나 ID를 가짐
         page_source = driver.page_source
         
-        # 3. 판매 종료를 알리는 핵심 키워드 (11번가 특화)
-        # 11번가는 판매 종료 시 팝업이나 상단 바에 아래 문구들이 뜹니다.
-        stop_keywords = [
+        # 판매 종료를 나타내는 결정적 텍스트들
+        expired_indicators = [
             "판매가 종료되었습니다",
-            "판매 종료",
+            "판매종료",
             "판매중단",
-            "판매 중단",
             "상품이 존재하지 않습니다",
-            "해당 상품은 판매가 종료되었습니다",
-            "페이지를 찾을 수 없습니다"
+            "유효하지 않은 상품",
+            "판매가 중단된 상품"
         ]
         
-        # 4. 검증 로직
-        # 문구 체크
-        if any(kw in page_source for kw in stop_keywords):
+        # [방법 A] 페이지 전체 텍스트에서 검사
+        if any(kw in page_source for kw in expired_indicators):
             return "Expired"
             
-        # 5. [추가 검증] 구매 버튼 상태 확인
-        # 11번가는 품절/종료 시 구매 버튼 텍스트가 '판매종료'로 바뀌거나 버튼이 비활성화됩니다.
+        # [방법 B] 구매/장바구니 버튼의 상태를 직접 확인 (버튼이 없거나 비활성화면 종료)
         try:
-            # 장바구니나 구매하기 버튼 영역에서 종료 문구가 있는지 재확인
-            buy_area = driver.find_element(By.CSS_SELECTOR, ".c_product_btn_box, .method").text
-            if "판매종료" in buy_area or "판매중단" in buy_area:
+            # 11번가의 '구매하기' 혹은 '장바구니' 관련 버튼들을 찾음
+            # 판매 종료 상품은 이 버튼들이 '판매종료' 텍스트로 바뀌거나 숨겨짐
+            btn_text = driver.find_element(By.CSS_SELECTOR, "div.c_product_btn_box, div.method, a.btn_buy").text
+            if "판매종료" in btn_text or "판매중단" in btn_text:
                 return "Expired"
         except:
-            pass # 버튼 영역을 못 찾아도 문구 체크가 우선이므로 넘어감
+            # 버튼 영역 자체가 아예 안 보인다면 종료된 것으로 간주
+            return "Expired"
+
+        # [방법 C] 현재 URL 확인 (에러 페이지나 메인으로 튕겼는지)
+        if "error" in driver.current_url or driver.current_url == "https://www.11st.co.kr/":
+            return "Expired"
 
         return "Active"
         
@@ -123,15 +115,51 @@ def check_11st_status(url, driver):
 
 def check_mustit_status(url, driver):
     try:
+        # 1. 타임아웃 설정 및 페이지 접속
+        driver.set_page_load_timeout(20) # 페이지 로딩이 너무 길어지면 에러 대신 다음으로 진행
         driver.get(url)
-        time.sleep(4)
-        curr = driver.current_url
-        if "redirector" in curr or "판매종료" in urllib.parse.unquote(curr):
+        time.sleep(5) # 팝업/알림창이 뜨는 시간을 충분히 확보
+        
+        # 2. 브라우저 알림창(Alert) 확인 로직 추가
+        try:
+            alert = driver.switch_to.alert
+            alert_text = alert.text
+            # 알림창 문구 확인
+            if any(kw in alert_text for kw in ["관리자에 의해 삭제", "판매종료", "존재하지 않는"]):
+                alert.accept() # 알림창 닫기
+                return "Expired"
+            alert.accept()
+        except:
+            # 알림창이 없는 경우 통과
+            pass
+
+        # 3. URL 및 페이지 소스 확인
+        current_url = driver.current_url
+        page_source = driver.page_source
+        
+        # URL 리다이렉션 감지 (주소에 특정 키워드가 포함되면 만료)
+        decoded_url = urllib.parse.unquote(current_url)
+        if "redirector" in current_url or "판매종료" in decoded_url or "etc/error" in current_url:
             return "Expired"
-        if any(kw in driver.page_source for kw in ["판매종료된 상품", "존재하지 않는 상품"]):
+            
+        # 페이지 내 텍스트 확인 (요청하신 '관리자에 의해 삭제된 상품' 포함)
+        expired_keywords = [
+            "관리자에 의해 삭제된 상품",
+            "판매종료된 상품",
+            "존재하지 않는 상품",
+            "판매가 종료된",
+            "삭제된 상품"
+        ]
+        
+        if any(kw in page_source for kw in expired_keywords):
             return "Expired"
+            
         return "Active"
-    except: return "Error"
+        
+    except Exception as e:
+        # 에러 발생 시 상세 이유를 로그로 남기되, 
+        # 페이지 로드 실패 자체가 종료된 상품의 징후일 수 있으므로 다시 한번 체크 시도
+        return "Error"
 
 # --- [드라이버 설정] ---
 def get_driver():
