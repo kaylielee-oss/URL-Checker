@@ -29,45 +29,43 @@ def check_pinterest_status(url):
 
 def check_trenbe_status(url, driver):
     try:
-        # 1. URL에서 정확한 숫자 ID 추출
+        # 1. URL에서 숫자(상품번호) 추출
         match = re.search(r'\d+', str(url))
         if not match: return "Invalid URL"
-        p_id = match.group()
+        product_id = match.group()
         
-        # 2. 검색 페이지 접속
-        driver.get(f"https://www.trenbe.com/search?keyword={p_id}")
+        # 2. 트렌비 검색 URL 접속
+        search_url = f"https://www.trenbe.com/search?keyword={product_id}"
+        driver.get(search_url)
         
-        # 3. 로딩 대기 및 결과 분석
+        # 동적 로딩을 위한 충분한 대기 (최대 7초)
         try:
             WebDriverWait(driver, 7).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/product/'], .no-result-box, .search_no_result"))
             )
-        except: pass
-        
+        except:
+            pass 
+
         page_source = driver.page_source
         
-        # [수정된 로직 A] 명시적인 '결과 없음' 문구 확인
-        no_result_keywords = ["검색 결과가 없습니다", "결과가 없습니다", "검색 결과 0"]
+        # [수정 포인트 1] 명시적인 '결과 없음' 문구가 있을 때만 Expired 처리
+        no_result_keywords = ["검색 결과가 없습니다", "검색결과가 없습니다", "결과가 없습니다", "검색 결과 0"]
         if any(kw in page_source for kw in no_result_keywords):
             return "Expired"
             
-        # [수정된 로직 B] 검색 결과 리스트 내에 '정확한 상품 ID'를 가진 링크가 있는지 확인
-        # 추천 상품 섹션(예: .recommend-list)을 제외하고 메인 결과 영역만 타겟팅해야 함
-        search_results = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
+        # [수정 포인트 2] 검색 결과 리스트에 상품 카드(a 태그)가 하나라도 존재하는지 확인
+        # ID 대조가 너무 엄격하면 놓칠 수 있으므로, 검색 결과가 존재함 자체를 Active 근거로 삼음
+        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
         
-        found = False
-        for item in search_results:
-            href = item.get_attribute('href') or ""
-            # 단순히 포함 여부가 아니라 해당 p_id가 경로의 끝에 정확히 일치하는지 확인
-            if href.strip('/').split('/')[-1] == p_id:
-                found = True
-                break
-        
-        return "Active" if found else "Expired"
-        
+        if len(items) > 0:
+            # 검색 결과가 있다면 Active (대부분 검색어인 상품번호가 첫 번째에 뜸)
+            return "Active"
+        else:
+            return "Expired"
+            
     except Exception as e:
-        return f"Error: {str(e)}"
-
+        return "Error"
+        
 def check_11st_status(url, driver):
     try:
         match = re.search(r'\d+', str(url))
