@@ -11,55 +11,114 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 
-# --- [로직 1: pinterest.com 전용] ---
+# --- [로직 1: pinterest.com] ---
 def check_pinterest_status(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
         response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        if response.status_code == 200 and ('pinterestapp:pin' in response.text or 'og:title' in response.text):
-            return "Active"
+        pin_id = url.strip('/').split('/')[-1]
+        if response.status_code == 200 and pin_id in response.url:
+            if 'pinterestapp:pin' in response.text or 'og:title' in response.text:
+                return "Active"
         return "Dead"
     except:
         return "Error"
 
+# --- [로직 2: trenbe.com (정밀 ID 대조)] ---
+def check_trenbe_status(url, driver):
+    try:
+        match = re.search(r'\d+', str(url))
+        if not match: return "Invalid URL"
+        product_id = match.group()
+        
+        search_url = f"https://www.trenbe.com/search?keyword={product_id}"
+        driver.get(search_url)
+        time.sleep(4) 
+
+        page_source = driver.page_source
+        no_result_keywords = ['검색 결과가 없습니다', '검색결과가 없습니다', '결과가 없습니다']
+        if any(keyword in page_source for keyword in no_result_keywords):
+            return "Expired"
+
+        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
+        is_exact_match = any(product_id in (item.get_attribute('href') or "") for item in items)
+        return "Active" if is_exact_match else "Expired"
+    except:
+        return "Error"
+
+# --- [로직 3: 11st.co.kr (정밀 ID 대조)] ---
+def check_11st_status(url, driver):
+    try:
+        match = re.search(r'\d+', str(url))
+        if not match: return "Invalid URL"
+        product_id = match.group()
+        
+        search_url = f"https://search.11st.co.kr/Search.tmall?kwd={product_id}"
+        driver.get(search_url)
+        time.sleep(4) 
+
+        page_source = driver.page_source
+        if f"{product_id}의 검색 결과가 없습니다" in page_source or "검색 결과가 없습니다" in page_source:
+            return "Expired"
+
+        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/products/']")
+        is_exact_match = any(product_id in (item.get_attribute('href') or "") for item in items)
+        return "Active" if is_exact_match else "Expired"
+    except:
+        return "Error"
+
+# --- [로직 4: mustit.co.kr (리다이렉트 & 문구 검증)] ---
+def check_mustit_status(url, driver):
+    try:
+        driver.get(url)
+        time.sleep(4) # 팝업이나 리다이렉트 대기 시간
+        
+        current_url = driver.current_url
+        page_source = driver.page_source
+        
+        # 1. URL 리다이렉션 체크 (판매종료 시 특정 경로로 이동하는 경우)
+        if "redirector" in current_url or "판매종료" in urllib.parse.unquote(current_url):
+            return "Expired"
+            
+        # 2. 페이지 내 팝업 또는 안내 문구 체크
+        expired_keywords = [
+            "판매종료된 상품", 
+            "판매가 종료된", 
+            "존재하지 않는 상품", 
+            "상품이 없습니다",
+            "판매 종료된"
+        ]
+        
+        if any(kw in page_source for kw in expired_keywords):
+            return "Expired"
+            
+        return "Active"
+    except:
+        return "Error"
+
 # --- [드라이버 설정] ---
-def get_driver(selected_modes):
+def get_driver(platform_mode):
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
-    # 트렌비가 포함되어 있으면 창 크기와 에이전트 강화
-    if "trenbe.com" in selected_modes:
-        options.add_argument("window-size=1920x1080")
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    else:
-        options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+    # 공통적으로 안정적인 User-Agent 설정
+    options.add_argument("window-size=1920x1080")
+    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
-    try:
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=options)
-    except:
-        options.binary_location = "/usr/bin/chromium"
-        return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=options)
 
 # --- [UI 구성] ---
-st.set_page_config(page_title="URL Checker Pro (Multi)", layout="wide")
-st.title("🔍 통합 상품 상태 확인 도구 (다중 선택 모드)")
+st.set_page_config(page_title="URL Checker Pro", layout="wide")
+st.title("🔍 통합 상품 상태 확인 도구 (전 플랫폼 정밀화)")
 
-# 1. 사이드바 다중 선택 메뉴
-selected_modes = st.sidebar.multiselect(
-    "1. 분석할 플랫폼을 선택하세요 (다중 선택 가능)",
-    ["pinterest.com", "trenbe.com", "mustit.co.kr", "11st.co.kr"],
-    default=["pinterest.com"]
-)
-
+mode = st.sidebar.radio("1. 대상 플랫폼 선택", ["pinterest.com", "trenbe.com", "mustit.co.kr", "11st.co.kr"])
 input_method = st.sidebar.radio("2. 입력 방식 선택", ["CSV 업로드", "구글 시트 URL"])
 
 df = None
-
-# 데이터 로드
 if input_method == "CSV 업로드":
     file = st.file_uploader("CSV 파일 선택", type=["csv"])
     if file:
@@ -68,83 +127,37 @@ if input_method == "CSV 업로드":
 else:
     url = st.text_input("구글 시트 URL")
     if url and "/d/" in url:
-        try:
-            sid = url.split("/d/")[1].split("/")[0]
-            df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
-        except: st.error("시트를 불러올 수 없습니다.")
+        sid = url.split("/d/")[1].split("/")[0]
+        df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv")
 
-# 분석 시작
-if df is not None and len(selected_modes) > 0:
-    st.write(f"📊 로드된 데이터: {len(df)}행 | 선택된 모드: {', '.join(selected_modes)}")
-    
-    if st.button("🚀 선택한 플랫폼 분석 시작"):
+if df is not None:
+    if st.button("🚀 분석 시작"):
         progress = st.progress(0)
         status_label = st.empty()
+        driver = get_driver(mode) if mode != "pinterest.com" else None
         
-        # 브라우저가 필요한 플랫폼이 포함되어 있는지 확인
-        needs_browser = any(m in selected_modes for m in ["trenbe.com", "mustit.co.kr", "11st.co.kr"])
-        driver = get_driver(selected_modes) if needs_browser else None
-        
-        total_rows = len(df)
-        for idx in range(total_rows):
-            target_url = str(df.iloc[idx, 2]) # C열
-            data_platform = str(df.iloc[idx, 13]).lower() # N열
+        for idx in range(len(df)):
+            target_url = str(df.iloc[idx, 2])
+            data_platform = str(df.iloc[idx, 13]).lower()
             result = "Skipped"
 
             try:
-                # 1. Pinterest (선택 시에만)
-                if "pinterest.com" in selected_modes and 'pinterest' in data_platform:
+                if mode == "pinterest.com" and 'pinterest' in data_platform:
                     result = check_pinterest_status(target_url)
-                
-                # 2. Trenbe
-                elif "trenbe.com" in selected_modes and 'trenbe' in data_platform:
-                    match = re.search(r'\d+', target_url)
-                    if match:
-                        p_id = match.group()
-                        driver.get(f"https://www.trenbe.com/search?keyword={p_id}")
-                        time.sleep(4.5)
-                        if any(kw in driver.page_source for kw in ['검색 결과가 없습니다', '결과가 없습니다']):
-                            result = "Expired"
-                        else: result = "Active"
+                elif mode == "trenbe.com" and 'trenbe' in data_platform:
+                    result = check_trenbe_status(target_url, driver)
+                elif mode == "11st.co.kr" and ('11st' in data_platform or '11번가' in data_platform):
+                    result = check_11st_status(target_url, driver)
+                elif mode == "mustit.co.kr" and 'mustit' in data_platform:
+                    result = check_mustit_status(target_url, driver)
+            except:
+                result = "Error"
 
-                # 3. Mustit
-                elif "mustit.co.kr" in selected_modes and 'mustit' in data_platform:
-                    driver.get(target_url)
-                    time.sleep(3.5)
-                    curr = driver.current_url
-                    if "redirector" in curr or "판매종료" in urllib.parse.unquote(curr):
-                        result = "Expired"
-                    elif "판매종료된 상품" in driver.page_source:
-                        result = "Expired"
-                    else: result = "Active"
-
-                # 4. 11st
-                elif "11st.co.kr" in selected_modes and ('11st' in data_platform or '11번가' in data_platform):
-                    match = re.search(r'\d+', target_url)
-                    if match:
-                        p_id = match.group()
-                        driver.get(f"https://search.11st.co.kr/Search.tmall?kwd={p_id}")
-                        time.sleep(3.5)
-                        if "검색 결과가 없습니다" in driver.page_source:
-                            result = "Expired"
-                        else: result = "Active"
-
-            except: result = "Error"
-
-            # 결과 업데이트
-            if result != "Skipped":
-                df.iloc[idx, 3] = result
-            
-            progress.progress((idx + 1) / total_rows)
-            status_label.text(f"[{idx+1}/{total_rows}] 진행 중... (현재 행 플랫폼: {data_platform} -> 결과: {result})")
+            df.iloc[idx, 3] = result
+            progress.progress((idx + 1) / len(df))
+            status_label.text(f"[{idx+1}/{len(df)}] {mode} 확인 중... 결과: {result}")
 
         if driver: driver.quit()
-        st.success("🎉 선택한 모든 플랫폼의 분석이 완료되었습니다!")
+        st.success("🎉 분석 완료!")
         st.dataframe(df)
-
-        # 결과 다운로드
-        csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button("📥 결과 CSV 다운로드", csv, "multi_check_result.csv", "text/csv")
-else:
-    if len(selected_modes) == 0:
-        st.warning("⚠️ 왼쪽 사이드바에서 분석할 플랫폼을 최소 하나 이상 선택해 주세요.")
+        st.download_button("📥 결과 CSV 다운로드", df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig'), "check_result.csv", "text/csv")
