@@ -19,72 +19,38 @@ st.set_page_config(page_title="통합 URL 상태 확인 도구", layout="wide")
 # --- [로직 1] 트렌비 고정밀 검증 (ID 매칭 및 영역 분석 강화) ---
 def check_trenbe_status(url, driver):
     try:
-        # [준비] 상품 번호(ID) 추출
+        # [1] URL에서 상품 번호(ID) 추출
         match = re.search(r'(\d+)', str(url))
         if not match: return "Invalid URL"
         product_id = match.group(1)
 
-        # --- [단계 1] 검색 페이지 엄격 확인 (1차 필터링) ---
+        # [2] 트렌비 검색창에 ID로 직접 검색
         search_url = f"https://www.trenbe.com/search?keyword={product_id}"
         driver.get(search_url)
-        time.sleep(random.uniform(4.5, 6.0)) 
         
-        search_source = driver.page_source
+        # 봇 탐지 회피를 위한 랜덤 대기 (충분히 길게 설정)
+        time.sleep(random.uniform(5.5, 7.5)) 
         
-        # '결과가 없습니다' 문구가 뜨면 즉시 종료
-        if any(kw in search_source for kw in ['검색 결과가 없습니다', '결과가 없습니다']):
+        # [3] 검색 결과 페이지 분석
+        # '결과 없음' 문구가 뜨면 즉시 종료
+        page_source = driver.page_source
+        if any(kw in page_source for kw in ['검색 결과가 없습니다', '결과가 없습니다']):
             return "Expired"
 
-        # 검색 결과 리스트에서 내 상품 ID와 정확히 일치하는 링크가 있는지 확인 (추천 상품 배제)
+        # [4] 검색된 상품들의 링크(href) 중 내 상품 ID가 정확히 포함된 것이 있는지 확인
+        # 추천 상품 섹션에 낚이지 않기 위해 링크 주소를 전수 조사합니다.
         items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        is_exact_match_found = False
         for item in items:
             href = item.get_attribute('href') or ""
+            # ID가 정확히 일치하는 상품 링크가 검색 리스트에 존재하면 Active
             if f"/{product_id}" in href or f"++{product_id}" in href:
-                is_exact_match_found = True
-                break
-        
-        # 검색 결과에 내 ID와 매칭되는 상품이 없으면 즉시 Expired
-        if not is_exact_match_found:
-            return "Expired"
-
-        # --- [단계 2] 상세 페이지 정밀 판별 (2차 확인) ---
-        driver.get(url)
-        # 명시적 대기: 주요 버튼 영역이 나타날 때까지 대기
-        wait = WebDriverWait(driver, 10)
-        try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*='button_group'], div[class*='cta_area']")))
-        except:
-            pass
-            
-        time.sleep(3) # 판매 종료 팝업 레이어나 동적 텍스트 로딩 대기
-        
-        page_source = driver.page_source
-        # 상세 페이지의 명확한 종료 안내 확인
-        if any(kw in page_source for kw in ['판매가 종료된 상품입니다', '품절된 상품입니다', '존재하지 않는 상품']):
-            return "Expired"
-
-        # 메인 구매 섹션(CTA)만 타겟팅하여 텍스트 분석 (추천 상품 텍스트 배제)
-        try:
-            # 트렌비 메인 버튼 영역 클래스
-            cta_area = driver.find_element(By.CSS_SELECTOR, "div[class*='ProductDetail_button_group'], div[class*='cta_area']")
-            cta_text = cta_area.text
-            
-            # 메인 버튼 영역에 '품절'이나 '종료'가 보이면 즉시 Expired
-            if any(kw in cta_text for kw in ['품절', '종료', '판매불가']):
-                return "Expired"
-            
-            # 장바구니/바로구매 텍스트가 활성화되어 있는지 확인
-            active_keywords = ['장바구니', '바로구매', 'BUY NOW', '구매하기', '쇼핑백']
-            if any(kw in cta_text for kw in active_keywords):
                 return "Active"
-        except:
-            pass
-
-        return "Expired" 
+        
+        # 리스트는 떴으나 내 ID와 일치하는 상품이 없다면 (추천만 뜬 경우)
+        return "Expired"
+        
     except Exception as e:
         return "Error"
-
 # --- [로직 2] 머스트잇 정밀 검증 ---
 def check_mustit_status(url, driver):
     try:
