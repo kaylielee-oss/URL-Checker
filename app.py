@@ -27,7 +27,7 @@ def check_trenbe_status(url, driver):
         # --- [단계 1] 검색 페이지 엄격 확인 (1차 필터링) ---
         search_url = f"https://www.trenbe.com/search?keyword={product_id}"
         driver.get(search_url)
-        time.sleep(random.uniform(4.0, 5.5)) 
+        time.sleep(random.uniform(4.5, 6.0)) 
         
         search_source = driver.page_source
         
@@ -35,8 +35,7 @@ def check_trenbe_status(url, driver):
         if any(kw in search_source for kw in ['검색 결과가 없습니다', '결과가 없습니다']):
             return "Expired"
 
-        # 검색 결과 리스트에서 내 상품 ID와 정확히 일치하는 링크가 있는지 확인
-        # (추천 상품 섹션에 낚이지 않기 위함)
+        # 검색 결과 리스트에서 내 상품 ID와 정확히 일치하는 링크가 있는지 확인 (추천 상품 배제)
         items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
         is_exact_match_found = False
         for item in items:
@@ -45,6 +44,7 @@ def check_trenbe_status(url, driver):
                 is_exact_match_found = True
                 break
         
+        # 검색 결과에 내 ID와 매칭되는 상품이 없으면 즉시 Expired
         if not is_exact_match_found:
             return "Expired"
 
@@ -57,15 +57,16 @@ def check_trenbe_status(url, driver):
         except:
             pass
             
-        time.sleep(2) 
+        time.sleep(3) # 판매 종료 팝업 레이어나 동적 텍스트 로딩 대기
         
         page_source = driver.page_source
-        # 명확한 종료 레이어 확인
-        if any(kw in page_source for kw in ['판매가 종료된 상품입니다', '품절된 상품입니다']):
+        # 상세 페이지의 명확한 종료 안내 확인
+        if any(kw in page_source for kw in ['판매가 종료된 상품입니다', '품절된 상품입니다', '존재하지 않는 상품']):
             return "Expired"
 
         # 메인 구매 섹션(CTA)만 타겟팅하여 텍스트 분석 (추천 상품 텍스트 배제)
         try:
+            # 트렌비 메인 버튼 영역 클래스
             cta_area = driver.find_element(By.CSS_SELECTOR, "div[class*='ProductDetail_button_group'], div[class*='cta_area']")
             cta_text = cta_area.text
             
@@ -80,7 +81,7 @@ def check_trenbe_status(url, driver):
         except:
             pass
 
-        return "Expired" # 확실한 Active 증거가 없으면 Expired 처리
+        return "Expired" 
     except Exception as e:
         return "Error"
 
@@ -184,7 +185,7 @@ if uploaded_file is not None:
             df.iloc[idx, 3] = result 
             progress_bar.progress((idx + 1) / len(df))
             status_text.text(f"진행 중: {idx+1}/{len(df)} | 결과: {result}")
-            time.sleep(random.uniform(1.0, 2.0)) 
+            time.sleep(random.uniform(1.0, 2.0)) # 인간적인 요청 간격
 
         if driver: driver.quit()
         st.success("모든 분석이 완료되었습니다!")
