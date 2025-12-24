@@ -16,64 +16,75 @@ from selenium.webdriver.support import expected_conditions as EC
 # 1. 페이지 설정
 st.set_page_config(page_title="통합 URL 상태 확인 도구", layout="wide")
 
-# --- [로직 1] 트렌비 정밀 검증 (교차 검증 및 명시적 대기) ---
+# --- [로직 1] 트렌비 고정밀 검증 (ID 매칭 및 영역 분석 강화) ---
 def check_trenbe_status(url, driver):
     try:
-        # [준비] 상품 번호 추출
+        # [준비] 상품 번호(ID) 추출
         match = re.search(r'(\d+)', str(url))
-        product_id = match.group(1) if match else ""
+        if not match: return "Invalid URL"
+        product_id = match.group(1)
 
-        # --- [단계 1] 검색 페이지 확인 (보조 지표) ---
+        # --- [단계 1] 검색 페이지 엄격 확인 (1차 필터링) ---
         search_url = f"https://www.trenbe.com/search?keyword={product_id}"
         driver.get(search_url)
-        time.sleep(random.uniform(3.0, 4.0)) 
+        time.sleep(random.uniform(4.0, 5.5)) 
         
         search_source = driver.page_source
-        # 검색 결과에 내 상품 ID가 포함된 카드가 하나라도 있는지 확인
-        is_found_in_search = product_id in search_source and "결과가 없습니다" not in search_source
+        
+        # '결과가 없습니다' 문구가 뜨면 즉시 종료
+        if any(kw in search_source for kw in ['검색 결과가 없습니다', '결과가 없습니다']):
+            return "Expired"
 
-        # --- [단계 2] 상세 페이지 접속 및 정밀 판별 ---
+        # 검색 결과 리스트에서 내 상품 ID와 정확히 일치하는 링크가 있는지 확인
+        # (추천 상품 섹션에 낚이지 않기 위함)
+        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
+        is_exact_match_found = False
+        for item in items:
+            href = item.get_attribute('href') or ""
+            if f"/{product_id}" in href or f"++{product_id}" in href:
+                is_exact_match_found = True
+                break
+        
+        if not is_exact_match_found:
+            return "Expired"
+
+        # --- [단계 2] 상세 페이지 정밀 판별 (2차 확인) ---
         driver.get(url)
-        # 명시적 대기: 주요 버튼 영역이 나타날 때까지 최대 10초 대기
+        # 명시적 대기: 주요 버튼 영역이 나타날 때까지 대기
         wait = WebDriverWait(driver, 10)
         try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*='button_group'], div[class*='cta_area'], button")))
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*='button_group'], div[class*='cta_area']")))
         except:
             pass
             
-        time.sleep(2) # 동적 텍스트 렌더링 완료를 위한 추가 대기
+        time.sleep(2) 
         
-        page_text = driver.find_element(By.TAG_NAME, "body").text
         page_source = driver.page_source
-
-        # [판별 1] 명확한 종료 문구가 본문에 보이면 즉시 Expired
-        expired_keywords = ['판매가 종료된 상품입니다', '품절된 상품입니다', '존재하지 않는 상품', '정상적인 접근이 아닙니다']
-        if any(kw in page_text for kw in expired_keywords):
+        # 명확한 종료 레이어 확인
+        if any(kw in page_source for kw in ['판매가 종료된 상품입니다', '품절된 상품입니다']):
             return "Expired"
 
-        # [판별 2] 메인 구매 버튼 영역 분석
-        active_keywords = ['장바구니', '바로구매', 'BUY NOW', '구매하기', '쇼핑백']
+        # 메인 구매 섹션(CTA)만 타겟팅하여 텍스트 분석 (추천 상품 텍스트 배제)
         try:
-            # 추천 상품 영역을 제외한 실제 구매 섹션 타겟팅
-            cta_area = driver.find_element(By.CSS_SELECTOR, "div[class*='button_group'], div[class*='cta_area'], div[class*='bottom_tab']")
+            cta_area = driver.find_element(By.CSS_SELECTOR, "div[class*='ProductDetail_button_group'], div[class*='cta_area']")
             cta_text = cta_area.text
+            
+            # 메인 버튼 영역에 '품절'이나 '종료'가 보이면 즉시 Expired
+            if any(kw in cta_text for kw in ['품절', '종료', '판매불가']):
+                return "Expired"
+            
+            # 장바구니/바로구매 텍스트가 활성화되어 있는지 확인
+            active_keywords = ['장바구니', '바로구매', 'BUY NOW', '구매하기', '쇼핑백']
             if any(kw in cta_text for kw in active_keywords):
-                # 버튼 영역에 '품절'이나 '종료'가 같이 적혀있는지 재확인
-                if not any(kw in cta_text for kw in ['종료', '품절']):
-                    return "Active"
+                return "Active"
         except:
             pass
 
-        # [판별 3] 검색 결과가 있었고, 본문에 구매 키워드가 살아있다면 Active
-        if is_found_in_search and any(kw in page_text for kw in active_keywords):
-            if "판매가 종료" not in page_text:
-                return "Active"
-
-        return "Expired"
+        return "Expired" # 확실한 Active 증거가 없으면 Expired 처리
     except Exception as e:
         return "Error"
 
-# --- [로직 2] 머스트잇 / [로직 3] 기타 플랫폼 (기존 완성본 유지) ---
+# --- [로직 2] 머스트잇 정밀 검증 ---
 def check_mustit_status(url, driver):
     try:
         driver.get(url)
@@ -90,6 +101,7 @@ def check_mustit_status(url, driver):
         return "Expired"
     except: return "Error"
 
+# --- [로직 3] 핀터레스트/11번가 ---
 def check_pinterest_status(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     try:
@@ -133,7 +145,7 @@ def get_driver():
     return driver
 
 # --- [UI 메인 실행부] ---
-st.title("📌 통합 URL 고정밀 확인 도구 (최종 보정판)")
+st.title("📌 통합 URL 고정밀 확인 도구 (트렌비 ID 매칭 강화판)")
 
 selected_platforms = st.sidebar.multiselect(
     "분석할 플랫폼을 선택하세요",
