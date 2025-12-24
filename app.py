@@ -26,54 +26,41 @@ def check_pinterest_status(url):
         return "Error"
 
 # --- [로직 2] 트렌비 검증 (사용자가 제공한 코드 그대로 반영) ---
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
 def check_trenbe_status(url, driver):
     try:
-        # 1. URL에서 상품 ID 추출 (정규식 강화)
-        match = re.search(r'(\d+)', str(url))
-        if not match: return "Invalid URL"
-        product_id = match.group(1)
+        # 1. 상품 상세 페이지로 직접 접속
+        driver.get(url)
         
-        # 2. 검색 페이지 접속
-        search_url = f"https://www.trenbe.com/search?keyword={product_id}"
-        driver.get(search_url)
+        # 2. 페이지 로딩 대기 (최대 10초 대기, 요소가 나타나면 바로 진행)
+        # '장바구니' 혹은 '구매' 관련 버튼이 있는지 확인하는 것이 가장 확실합니다.
+        wait = WebDriverWait(driver, 10)
         
-        # 3. 페이지가 완전히 로드될 때까지 충분히 대기
-        # (기존 time.sleep보다 안정적인 방식이지만, 일단 5초로 설정)
-        time.sleep(5) 
-
-        # [검증 1] '검색 결과 없음' 텍스트 확인 (가장 확실한 지표)
-        page_source = driver.page_source
-        no_result_text = ['검색 결과가 없습니다', '검색결과가 없습니다', '결과가 없습니다']
-        if any(kw in page_source for kw in no_result_text):
+        try:
+            # 트렌비 상세페이지의 구매/장바구니 버튼을 포함하는 주요 선택자 대기
+            # 버튼 텍스트에 '장바구니' 혹은 '구매'가 포함된 요소를 찾습니다.
+            wait.until(EC.presence_of_element_located((By.XPATH, "//button[contains(., '구매') or contains(., '장바구니')]")))
+            return "Active"
+        except:
+            # 대기 시간 초과 시, 페이지 소스에서 텍스트 기반 2차 검증
+            page_source = driver.page_source
+            
+            # 판매 종료/품절 키워드가 있으면 확실히 Expired
+            expired_keywords = ['판매가 종료된', '품절된 상품', '상품이 존재하지 않습니다', '정상적인 접근이 아닙니다']
+            if any(kw in page_source for kw in expired_keywords):
+                return "Expired"
+            
+            # 버튼은 안 보이지만 페이지 소스에 구매 관련 키워드가 있다면 Active 시도
+            active_keywords = ['바로구매', '장바구니담기', 'ADD TO BAG']
+            if any(kw in page_source for kw in active_keywords):
+                return "Active"
+                
             return "Expired"
 
-        # [검증 2] 검색 결과 영역 내 상품들 추출
-        # 트렌비의 실제 검색 결과 아이템들은 보통 특정 리스트 컨테이너 안에 있습니다.
-        # 모든 a 태그를 가져와서 내 product_id가 포함되어 있는지 확인합니다.
-        items = driver.find_elements(By.TAG_NAME, "a")
-        
-        found = False
-        for item in items:
-            try:
-                href = item.get_attribute('href')
-                if href and ("/product/" in href) and (product_id in href):
-                    # 해당 링크가 실제 상품 카드인지 확인 (너무 작은 요소 제외)
-                    if item.size['width'] > 10: 
-                        found = True
-                        break
-            except:
-                continue
-
-        if found:
-            return "Active"
-        
-        # [검증 3] 텍스트 기반 재확인
-        # 만약 링크는 못 찾았지만 페이지 소스에 해당 ID와 '상품' 관련 키워드가 같이 있다면 Active 가능성 있음
-        # 하지만 더 안전하게 하기 위해 링크 매칭 실패 시 Expired 처리
-        return "Expired"
-
     except Exception as e:
-        return f"Error"
+        return "Error"
 
 # --- [로직 3] 11번가 검증 (검색 기반 정밀 대조) ---
 def check_11st_status(url, driver):
