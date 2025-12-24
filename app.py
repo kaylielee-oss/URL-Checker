@@ -28,49 +28,52 @@ def check_pinterest_status(url):
 # --- [로직 2] 트렌비 검증 (사용자가 제공한 코드 그대로 반영) ---
 def check_trenbe_status(url, driver):
     try:
-        # 1. URL에서 상품 ID 추출
-        match = re.search(r'\d+', str(url))
+        # 1. URL에서 상품 ID 추출 (정규식 강화)
+        match = re.search(r'(\d+)', str(url))
         if not match: return "Invalid URL"
-        product_id = match.group()
+        product_id = match.group(1)
         
         # 2. 검색 페이지 접속
         search_url = f"https://www.trenbe.com/search?keyword={product_id}"
         driver.get(search_url)
-        time.sleep(5)  # 동적 컨텐츠 로딩을 위해 충분한 시간 할당
-
-        page_source = driver.page_source
         
-        # [검증 A] '검색 결과 없음' 텍스트 직접 확인
-        no_result_keywords = ['검색 결과가 없습니다', '검색결과가 없습니다', '결과가 없습니다']
-        if any(keyword in page_source for keyword in no_result_keywords):
+        # 3. 페이지가 완전히 로드될 때까지 충분히 대기
+        # (기존 time.sleep보다 안정적인 방식이지만, 일단 5초로 설정)
+        time.sleep(5) 
+
+        # [검증 1] '검색 결과 없음' 텍스트 확인 (가장 확실한 지표)
+        page_source = driver.page_source
+        no_result_text = ['검색 결과가 없습니다', '검색결과가 없습니다', '결과가 없습니다']
+        if any(kw in page_source for kw in no_result_text):
             return "Expired"
 
-        # [검증 B] 상품 리스트 영역 내에서 ID 매칭 확인
-        # 트렌비 검색 결과 리스트를 담는 주요 클래스나 구조를 타겟팅합니다.
-        # 일반적인 a 태그가 아닌, 검색 결과 전용 영역(Main Content) 내의 상품만 찾습니다.
+        # [검증 2] 검색 결과 영역 내 상품들 추출
+        # 트렌비의 실제 검색 결과 아이템들은 보통 특정 리스트 컨테이너 안에 있습니다.
+        # 모든 a 태그를 가져와서 내 product_id가 포함되어 있는지 확인합니다.
+        items = driver.find_elements(By.TAG_NAME, "a")
         
-        # 검색된 상품 카드들을 찾습니다. (트렌비의 상품 리스트 CSS 선택자 반영)
-        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        
-        # 실제 검색 결과 아이템들 중 현재 product_id와 정확히 일치하는 것이 있는지 확인
-        # 추천 상품(Recommended)과 섞이지 않도록 상위 1~3개 정도만 보거나 
-        # href 경로가 정확히 일치하는지 봅니다.
-        is_exact_match = False
+        found = False
         for item in items:
-            href = item.get_attribute('href')
-            if href and product_id in href:
-                # 추천 상품 섹션에 있는 것인지 확인하기 위해 부모 요소의 텍스트 등을 체크할 수 있습니다.
-                # 보통 추천 상품은 '이런 상품은 어떠세요' 등의 문구 아래에 위치합니다.
-                is_exact_match = True
-                break
+            try:
+                href = item.get_attribute('href')
+                if href and ("/product/" in href) and (product_id in href):
+                    # 해당 링크가 실제 상품 카드인지 확인 (너무 작은 요소 제외)
+                    if item.size['width'] > 10: 
+                        found = True
+                        break
+            except:
+                continue
 
-        if is_exact_match:
+        if found:
             return "Active"
-        else:
-            return "Expired" # 검색 결과가 없어서 추천 상품만 뜬 경우
+        
+        # [검증 3] 텍스트 기반 재확인
+        # 만약 링크는 못 찾았지만 페이지 소스에 해당 ID와 '상품' 관련 키워드가 같이 있다면 Active 가능성 있음
+        # 하지만 더 안전하게 하기 위해 링크 매칭 실패 시 Expired 처리
+        return "Expired"
 
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error"
 
 # --- [로직 3] 11번가 검증 (검색 기반 정밀 대조) ---
 def check_11st_status(url, driver):
