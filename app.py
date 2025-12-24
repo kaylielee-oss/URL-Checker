@@ -28,31 +28,29 @@ def check_pinterest_status(url):
 # --- [로직 2] 트렌비 검증 (사용자가 제공한 코드 그대로 반영) ---
 def check_trenbe_status(url, driver):
     try:
-        # 1. URL에서 상품 ID 추출
-        match = re.search(r'\d+', str(url))
-        if not match: return "Invalid URL"
-        product_id = match.group()
-        
-        # 2. 검색 페이지 접속
-        search_url = f"https://www.trenbe.com/search?keyword={product_id}"
-        driver.get(search_url)
-        time.sleep(4) # 동적 컨텐츠 로딩 대기
+        driver.get(url)
+        time.sleep(4)  # 로딩 대기 (필요시 조절)
 
-        # 3. '검색 결과 없음' 문구 체크
         page_source = driver.page_source
-        no_result_keywords = ['검색 결과가 없습니다', '검색결과가 없습니다', '결과가 없습니다']
-        if any(keyword in page_source for keyword in no_result_keywords):
+        
+        # 1. 페이지를 찾을 수 없거나 삭제된 경우 (404 대응)
+        error_keywords = ['페이지를 찾을 수 없습니다', '잘못된 접근입니다', '상품이 존재하지 않습니다']
+        if any(kw in page_source for kw in error_keywords):
             return "Expired"
 
-        # 4. 정밀 검증: 검색된 상품 리스트 중 내 상품 ID가 포함된 링크가 있는지 확인
-        # 트렌비가 결과가 없을 때 '추천 상품'을 띄우는 경우를 대비함
-        items = driver.find_elements(By.CSS_SELECTOR, "a[href*='/product/']")
-        is_exact_match = any(product_id in item.get_attribute('href') for item in items)
+        # 2. 품절 또는 판매 종료 문구 확인
+        # 트렌비는 보통 '판매가 종료된 상품입니다' 혹은 'SOLD OUT' 문구가 뜸
+        expired_keywords = ['판매가 종료된', '판매 종료', '품절된 상품', '재입고 알림받기']
+        if any(kw in page_source for kw in expired_keywords):
+            return "Expired"
 
-        if is_exact_match:
+        # 3. 정상 판매 확인 (장바구니 또는 바로구매 버튼의 존재 여부)
+        # 클래스명이나 텍스트로 '장바구니' 혹은 '바로구매'가 있는지 확인
+        active_keywords = ['장바구니', '바로구매', 'BUY NOW']
+        if any(kw in page_source for kw in active_keywords):
             return "Active"
-        else:
-            return "Expired" # 추천 상품만 뜨고 내 상품은 없는 경우
+
+        return "Expired" # 위 조건에 해당하지 않으면 판매 중이 아닌 것으로 간주
     except:
         return "Error"
 
